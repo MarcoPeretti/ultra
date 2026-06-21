@@ -122,6 +122,10 @@ class AncsGattClient(
             onRemove(event.notificationUid)
             return
         }
+        // TODO(whatsapp): messaging apps may coalesce and arrive as EVENT_MODIFIED
+        //  rather than EVENT_ADDED. If WhatsApp messages don't surface once iPhone-side
+        //  Focus/DND is ruled out, also handle EVENT_MODIFIED here (update the posted
+        //  notification). See README "Status".
         if (event.eventId != AncsProtocol.EVENT_ADDED) return
         // Skip the backlog iOS replays on every (re)subscribe — otherwise the watch
         // bundles them into a silent aggregate that buries live notifications.
