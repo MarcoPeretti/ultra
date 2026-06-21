@@ -27,13 +27,28 @@ class MainActivity : ComponentActivity() {
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
-    ) { /* state is read live by the service when started */ }
+    ) { startBridgeIfReady() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        permissionLauncher.launch(REQUIRED_PERMISSIONS)
+        // Auto-start the bridge on open so it just runs in the background; request
+        // permissions first if they aren't granted yet.
+        if (hasBluetoothPermissions()) {
+            startBridgeIfReady()
+        } else {
+            permissionLauncher.launch(REQUIRED_PERMISSIONS)
+        }
         setContent { BridgeScreen() }
     }
+
+    private fun startBridgeIfReady() {
+        if (hasBluetoothPermissions()) AncsService.start(this)
+    }
+
+    private fun hasBluetoothPermissions(): Boolean = listOf(
+        Manifest.permission.BLUETOOTH_ADVERTISE,
+        Manifest.permission.BLUETOOTH_CONNECT,
+    ).all { checkSelfPermission(it) == android.content.pm.PackageManager.PERMISSION_GRANTED }
 
     companion object {
         val REQUIRED_PERMISSIONS = arrayOf(

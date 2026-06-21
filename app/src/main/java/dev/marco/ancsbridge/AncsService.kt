@@ -23,8 +23,12 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.ParcelUuid
+import android.os.VibrationEffect
+import android.os.VibratorManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -73,6 +77,7 @@ class AncsService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         runCatching { unregisterReceiver(bondReceiver) }
+        stopRinging()
         advertiser?.stopAdvertising(advertiseCallback)
         client?.close()
         gattServer?.close()
@@ -145,6 +150,7 @@ class AncsService : Service() {
                     AncsState.addLog("iPhone disconnected")
                     client?.close()
                     client = null
+                    stopRinging() // don't keep buzzing on a dropped link
                     AncsState.setConnection(ConnectionState.DISCONNECTED)
                 }
             }
@@ -157,7 +163,10 @@ class AncsService : Service() {
             context = this,
             device = device,
             onNotification = { notification -> onAncsNotification(notification) },
-            onRemove = { uid -> NotificationManagerCompat.from(this).cancel(uid) },
+            onRemove = { uid ->
+                NotificationManagerCompat.from(this).cancel(uid)
+                if (uid == ringingCallUid) stopRinging() // call answered or dropped
+            },
         )
         client?.connect()
     }
@@ -176,6 +185,7 @@ class AncsService : Service() {
     // --- surfacing notifications ---------------------------------------------
     private fun onAncsNotification(notification: AncsNotification) {
         AncsState.setNotification(notification)
+        if (notification.isIncomingCall) startRingingForCall(notification.uid)
         val label = if (notification.isIncomingCall) "Incoming call" else (notification.appId ?: "Notification")
         val title = notification.title ?: label
         val text = if (notification.isIncomingCall) "Incoming call" else (notification.message ?: "")
@@ -219,8 +229,33 @@ class AncsService : Service() {
             NotificationChannel(CHANNEL_SERVICE, "Bridge service", NotificationManager.IMPORTANCE_LOW),
         )
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_ALERTS, "iPhone alerts", NotificationManager.IMPORTANCE_HIGH),
+            NotificationChannel(CHANNEL_ALERTS, "iPhone alerts", NotificationManager.IMPORTANCE_HIGH).apply {
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 400, 200, 400)
+            },
         )
+    }
+
+    // --- ringing vibration ----------------------------------------------------
+    private val vibrator by lazy { getSystemService(VibratorManager::class.java)?.defaultVibrator }
+    private var ringingCallUid: Int? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val stopRingingRunnable = Runnable { stopRinging() }
+
+    /** Buzz repeatedly like a phone until the call is answered/dropped (Removed) or a safety timeout. */
+    private fun startRingingForCall(uid: Int) {
+        if (uid == ringingCallUid) return // already ringing for this call
+        ringingCallUid = uid
+        val pattern = longArrayOf(0, 1000, 1000) // 1s buzz, 1s pause, …
+        vibrator?.vibrate(VibrationEffect.createWaveform(pattern, /* repeat from index */ 0))
+        mainHandler.removeCallbacks(stopRingingRunnable)
+        mainHandler.postDelayed(stopRingingRunnable, RING_TIMEOUT_MS) // never buzz forever
+    }
+
+    private fun stopRinging() {
+        mainHandler.removeCallbacks(stopRingingRunnable)
+        ringingCallUid = null
+        vibrator?.cancel()
     }
 
     private fun hasBluetoothPermissions(): Boolean {
@@ -234,6 +269,7 @@ class AncsService : Service() {
         private const val CHANNEL_SERVICE = "bridge_service"
         private const val CHANNEL_ALERTS = "iphone_alerts"
         private const val SERVICE_NOTIF_ID = 1
+        private const val RING_TIMEOUT_MS = 60_000L // safety cap if a Removed event never arrives
 
         /** Arbitrary placeholder GATT service hosted on the watch so iOS can connect. */
         private val LOCAL_PLACEHOLDER_SERVICE: java.util.UUID =

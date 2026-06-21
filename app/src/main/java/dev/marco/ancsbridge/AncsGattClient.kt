@@ -118,8 +118,6 @@ class AncsGattClient(
     private fun handleNotificationSource(value: ByteArray) {
         val event = AncsProtocol.parseNotificationSource(value) ?: return
         AncsState.addLog("notif uid=${event.notificationUid} cat=${event.categoryId} evt=${event.eventId}")
-        // MVP filter: calls now, social (WhatsApp) once you broaden this set.
-        if (!event.isIncomingCall && !event.isSocial) return
         if (event.eventId == AncsProtocol.EVENT_REMOVED) {
             onRemove(event.notificationUid)
             return
@@ -131,6 +129,8 @@ class AncsGattClient(
             AncsState.addLog("skipping pre-existing uid=${event.notificationUid}")
             return
         }
+        // Post every live notification (incoming calls, WhatsApp/social, messages, …).
+        // iOS's category for an app isn't always what you'd guess, so we don't filter.
         // Show the call immediately so a failed attribute round-trip can't swallow it;
         // the caller name (if it arrives) updates the same notification afterwards.
         onNotification(
