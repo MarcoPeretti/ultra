@@ -81,31 +81,35 @@ The easiest workflow is to **open the folder in Android Studio** and let it sync
 4. On first launch, grant the Bluetooth + notification permissions, then tap
    **Start**.
 
-## Pair the iPhone (one-time) — the tricky bit
+## Pair the iPhone (one-time) — bond via LightBlue
 
-"Bonded" means a **BLE bond**, not a Classic Bluetooth pairing. The flow:
+"Bonded" means a **BLE bond**, not a Classic Bluetooth pairing. Key facts:
 
 - The watch advertises connectable **and solicits the ANCS service UUID** — the
-  ANCS-spec signal that tells iOS "connect to me, I want your notifications."
-- **iOS is always the side that connects** (the watch can't dial the iPhone; iOS
-  doesn't advertise ANCS to arbitrary devices).
-- The **bond is triggered the moment the watch subscribes to ANCS** (an
-  encryption-required characteristic): iOS shows a pair prompt, then
-  **"Allow [device] to access notifications."** Accept both → ANCS appears.
+  ANCS-spec signal that says "connect to me, I want your notifications."
+- **iOS is always the side that connects** (the watch can't dial the iPhone).
+- **iOS Settings ▸ Bluetooth does NOT list generic BLE peripherals**, so you can't
+  start pairing there. You need *something* on the iPhone to initiate the connection
+  once. A free BLE scanner app does this perfectly — **LightBlue** (verified working
+  on a Galaxy Watch Ultra; nRF Connect did not surface the pairing the same way).
 
-Steps:
-1. With the watch showing **"Advertising"**, open **Settings ▸ Bluetooth** on the
-   iPhone and look under *Other Devices* for the watch; tap it.
-2. Accept the pairing prompt **and** the notification-access prompt.
-3. Watch should go Connected → Bonded → **Ready ✓**.
+**Once the bond exists, iOS maintains the ANCS connection by itself — no app, not
+even LightBlue, needs to stay connected.** LightBlue is only a one-time matchmaker.
 
-**If the watch never appears in iOS Settings** (generic GATT peripherals don't
-always surface there, despite the solicitation): the robust fallback — and what
-Merge/Bridge actually ship — is a **~30-line iOS CoreBluetooth helper app** whose
-only job is to *scan for and `connect()` to the watch*. It reads no notifications
-(ANCS still delivers those at the OS level), so it stays within iOS's rules; it just
-deterministically initiates the connection that triggers bonding. Treat this as
-plan B if Settings-based bonding proves flaky on the Ultra.
+Steps (one-time):
+1. With the watch showing **"Advertising"**, install **LightBlue** on the iPhone
+   from the App Store and open it.
+2. **Scan** and find the watch — it shows its Bluetooth name and lists *Solicited
+   Services: ANCS* (`7905F431…`). Tap **Connect**.
+3. iOS shows a **pairing prompt** (and a notification-access prompt) — accept both.
+   The watch advances Advertising → Connected → Bonded → **Ready ✓**.
+4. **Quit LightBlue** (swipe it out of the app switcher). Do *not* leave it
+   connected — while it holds the link it causes connect/disconnect flapping. With it
+   closed, iOS keeps the bonded connection alive on its own.
+
+> Why not just keep an iOS companion app? You don't need one — iOS reconnects to the
+> bonded, ANCS-soliciting watch automatically. A companion app would only be a more
+> polished replacement for the one-time LightBlue step.
 
 ## End-to-end test
 

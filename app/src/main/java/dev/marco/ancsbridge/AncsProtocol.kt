@@ -51,6 +51,11 @@ object AncsProtocol {
     const val ATTR_DATE = 5
 
     /** Parsed Notification Source packet (8 bytes). */
+    // EventFlags bitmask (Notification Source byte 1).
+    const val FLAG_SILENT = 1 shl 0
+    const val FLAG_IMPORTANT = 1 shl 1
+    const val FLAG_PRE_EXISTING = 1 shl 2
+
     data class NotificationSourceEvent(
         val eventId: Int,
         val eventFlags: Int,
@@ -60,6 +65,9 @@ object AncsProtocol {
     ) {
         val isIncomingCall: Boolean get() = categoryId == CATEGORY_INCOMING_CALL
         val isSocial: Boolean get() = categoryId == CATEGORY_SOCIAL
+
+        /** True for the backlog iOS replays on every (re)subscribe — usually not worth re-alerting. */
+        val isPreExisting: Boolean get() = (eventFlags and FLAG_PRE_EXISTING) != 0
     }
 
     /**

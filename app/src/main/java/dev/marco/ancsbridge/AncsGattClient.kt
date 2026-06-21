@@ -27,6 +27,7 @@ class AncsGattClient(
     private val context: Context,
     private val device: BluetoothDevice,
     private val onNotification: (AncsNotification) -> Unit,
+    private val onRemove: (Int) -> Unit = {},
 ) {
     private var gatt: BluetoothGatt? = null
 
@@ -93,10 +94,12 @@ class AncsGattClient(
         }
 
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) {
+            AncsState.addLog("descriptor write (notify enable) status=$status")
             operationComplete()
         }
 
         override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
+            AncsState.addLog("control-point write result status=$status")
             operationComplete()
         }
 
@@ -115,9 +118,24 @@ class AncsGattClient(
     private fun handleNotificationSource(value: ByteArray) {
         val event = AncsProtocol.parseNotificationSource(value) ?: return
         AncsState.addLog("notif uid=${event.notificationUid} cat=${event.categoryId} evt=${event.eventId}")
-        if (event.eventId != AncsProtocol.EVENT_ADDED) return
         // MVP filter: calls now, social (WhatsApp) once you broaden this set.
         if (!event.isIncomingCall && !event.isSocial) return
+        if (event.eventId == AncsProtocol.EVENT_REMOVED) {
+            onRemove(event.notificationUid)
+            return
+        }
+        if (event.eventId != AncsProtocol.EVENT_ADDED) return
+        // Skip the backlog iOS replays on every (re)subscribe — otherwise the watch
+        // bundles them into a silent aggregate that buries live notifications.
+        if (event.isPreExisting) {
+            AncsState.addLog("skipping pre-existing uid=${event.notificationUid}")
+            return
+        }
+        // Show the call immediately so a failed attribute round-trip can't swallow it;
+        // the caller name (if it arrives) updates the same notification afterwards.
+        onNotification(
+            AncsNotification(event.notificationUid, event.categoryId, title = null, message = null, appId = null),
+        )
         requestAttributes(event)
     }
 
@@ -135,20 +153,24 @@ class AncsGattClient(
         val controlPoint = gatt?.getService(AncsProtocol.SERVICE_UUID)
             ?.getCharacteristic(AncsProtocol.CONTROL_POINT_UUID) ?: return
         val command = AncsProtocol.buildGetNotificationAttributesCommand(event.notificationUid, requests)
+        AncsState.addLog("requesting attributes for uid=${event.notificationUid}")
         enqueue {
-            gatt?.writeCharacteristic(
+            val rc = gatt?.writeCharacteristic(
                 controlPoint,
                 command,
                 BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
             )
+            AncsState.addLog("control-point write submitted rc=$rc")
         }
     }
 
     private fun handleDataSource(chunk: ByteArray) {
         dataSourceBuffer += chunk
+        AncsState.addLog("data-source chunk ${chunk.size}B (total ${dataSourceBuffer.size}B)")
         val response = AncsProtocol.parseGetAttributesResponse(dataSourceBuffer, pendingAttributeCount)
             ?: return // more fragments to come
         if (response.notificationUid != pendingUid) return
+        AncsState.addLog("attributes parsed: title='${response.title}' app='${response.appIdentifier}'")
         onNotification(
             AncsNotification(
                 uid = response.notificationUid,

@@ -51,6 +51,8 @@ class AncsService : Service() {
         AncsState.addLog("service onCreate")
         try {
             createChannels()
+            // Clear any stale silent aggregate from a previous backlog flood.
+            NotificationManagerCompat.from(this).cancelAll()
             startForegroundServiceNotification()
             registerReceiver(bondReceiver, IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED))
             if (!hasBluetoothPermissions()) {
@@ -151,7 +153,12 @@ class AncsService : Service() {
 
     private fun startClient(device: BluetoothDevice) {
         client?.close()
-        client = AncsGattClient(this, device) { notification -> onAncsNotification(notification) }
+        client = AncsGattClient(
+            context = this,
+            device = device,
+            onNotification = { notification -> onAncsNotification(notification) },
+            onRemove = { uid -> NotificationManagerCompat.from(this).cancel(uid) },
+        )
         client?.connect()
     }
 
@@ -176,8 +183,10 @@ class AncsService : Service() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
             != PackageManager.PERMISSION_GRANTED
         ) {
+            AncsState.addLog("cannot post: POST_NOTIFICATIONS not granted")
             return
         }
+        AncsState.addLog("posting watch notification uid=${notification.uid} title='$title'")
         val notif = NotificationCompat.Builder(this, CHANNEL_ALERTS)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(title)
